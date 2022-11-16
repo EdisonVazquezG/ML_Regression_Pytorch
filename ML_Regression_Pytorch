@@ -1,0 +1,55 @@
+import torch
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
+
+dtype = torch.float
+device = torch.device("cuda:0")
+#device = torch.device("cpu")
+
+
+#################### PYTORCH without backward() function
+
+x = torch.linspace(0, 100, 100, device=device, dtype=dtype)
+y = 2*x + 1
+m = torch.randn((), device=device, dtype=dtype) 
+b = torch.randn((), device=device, dtype=dtype)
+## Initialize the value for learning rate, iter and N
+learning_rate = 1e-6
+iter = 50000
+N = len(x)
+
+### start of the loop 
+start = torch.cuda.Event(enable_timing=True)
+end = torch.cuda.Event(enable_timing=True)
+
+start.record()
+for epoch in range(iter):
+  y_pred = m*x + b
+  b -= learning_rate*((y_pred - y).sum())/N
+  m -= learning_rate*(((y_pred - y)*x).sum())/N
+end.record()
+
+# Waits for everything to finish running
+torch.cuda.synchronize()
+
+print(start.elapsed_time(end))
+
+print(f'Result: y = {m.item()} x + {b.item()}')
+
+######################  PYTORCH with backward() function
+
+log = []
+def apply_step(params):
+  preds = f(x, params)
+  loss = mse(preds, y)
+  loss.backward()
+  params.data -= lr * params.grad.data
+  log.append(params.data)
+  params.grad = None
+  return preds, loss, log
+
+#op,l,params_ = apply_step(params)
+
+for i in range(1000): op,l,params_ = apply_step(params)
