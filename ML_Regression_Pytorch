@@ -1,55 +1,306 @@
-import torch
-import math
-import numpy as np
+
+from ctypes.wintypes import WIN32_FIND_DATAA
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error
+import torch
+import numpy as np 
+from numpy.random import random
+from mpl_toolkits.mplot3d import Axes3D
 
-dtype = torch.float
-device = torch.device("cuda:0")
-#device = torch.device("cpu")
+torch.__version__
+
+## create a empty 2-tensor of dimension 3x5
+x = torch.empty(3,5)
+print(x.dtype)
+print(x)
+
+## create a empty tensor with random values of 3x5 dimension
+x = torch.randn(3,5)
+print(x)
+
+## print the size of your tensor 
+print(x.size())
+## torch.size is in fact a tuple, so it supports the same operations
+x.size()[1]
+
+##### Broadcasting
+
+A = torch.tensor([[1.],[2.],[3.],[4.]])
+print(A.size())
+B = torch.tensor([[5.,-5.,5.,-5.,5]])
+print(B.size())
+C = A+B
+C
+
+#### In-place modification
+
+x = torch.randn(5,5)
+xr = torch.randn(5,5)
+
+# if we want to sum two tensors we can use this two options:
+
+#1)
+print(x+xr)
+
+#2)
+x.add(xr)
+
+# the second option have a complement when you write an underscore between the add and the parenthesis. This will cause a overwritting in the first tensor
+x.add_(xr)
+
+#### Cuda 
+torch.cuda.is_available()
+device = torch.device('cuda')
+x.device
+
+##################### Automatic differentiation
+
+#Let say we start with out model in numpy:
+w = np.array([0.5])
+b = np.array([2.])
+xx = np.array([0.5])
+
+#transform these into tensor:
+xx_t = torch.from_numpy(xx)
+w_t = torch.from_numpy(w)
+b_t = torch.from_numpy(b)
+
+# A tensor has a Boolean field "requieres_grad" set to False by default, which states if Pytorch should build graph of operations so that gradient with respect to it can be computed 
+#So we want to to take derivative with respect to w so we change this value: 
+w_t.requires_grad_(True)
+#The same thing for parameter b
+b_t.requires_grad_(True) ## this will show a message error because b is not a floating value
+## so we have to do a change into the dtype attribute
+dtype = torch.float64
+b_t = b_t.type(dtype)
+b_t.requires_grad_(True) 
+
+#We now compute the function 
+def fun(x,ystar):
+    y = torch.exp(w_t * x + b_t) #[9.4877]
+    print(y)
+    return torch.sum((y-ystar)**2)
+
+y_star_t = torch.rand_like(xx_t) ### the vector to predict #[0.7201]
+l_t = fun(xx_t,y_star_t) ## loss function of the prediction 
+
+## Afterward the computation is finished, i.e. forward pass, you can call .backward() and have all the gradients computed automatically
+
+l_t.requires_grad
+l_t.backward()
+w_t.grad #[83.1849] = (2*(9.4877-0.720))*9.4877*0.5
+b_t.grad #[166.3699]
+
+## Setting up the gradients values to zero
+w_t.grad.data.zero_()
+b_t.grad.data.zero_()
+l_t = fun(xx_t,y_star_t)
+l_t.backward(retain_graph=True) 
+l_t.backward()
+w_t.grad 
+b_t.grad 
 
 
-#################### PYTORCH without backward() function
+################################################################################ playing with pytorch: linear regression 
 
-x = torch.linspace(0, 100, 100, device=device, dtype=dtype)
-y = 2*x + 1
-m = torch.randn((), device=device, dtype=dtype) 
-b = torch.randn((), device=device, dtype=dtype)
-## Initialize the value for learning rate, iter and N
-learning_rate = 1e-6
-iter = 50000
-N = len(x)
+x = random((30,2)) ## generate random values in an array of dimensions 30x2
 
-### start of the loop 
-start = torch.cuda.Event(enable_timing=True)
-end = torch.cuda.Event(enable_timing=True)
+## generate labels corresponding to input data x 
+y = np.dot(x,[2.,-3.]) + 1 ## multiplying the vector x with the two values 2 and -3 with respect to each column of x and then summing 1 
+## generating the initial values for w and b
+w_source = np.array([2.,-3.])
+b_source = np.array([1.])
 
-start.record()
-for epoch in range(iter):
-  y_pred = m*x + b
-  b -= learning_rate*((y_pred - y).sum())/N
-  m -= learning_rate*(((y_pred - y)*x).sum())/N
-end.record()
 
-# Waits for everything to finish running
-torch.cuda.synchronize()
+## we initialize the weigths 
+w_init = np.array([0.75873186,0.90213242])
+b_init = np.array([0.10105847])
 
-print(start.elapsed_time(end))
+########################################################################## Linear regression with tensors
 
-print(f'Result: y = {m.item()} x + {b.item()}')
+## we need to set the float.tensor
+dtype = torch.DoubleTensor
+# dtype = torch.cuda.FloatTensor #uncomment this to run on GPU
 
-######################  PYTORCH with backward() function
+x_t = torch.from_numpy(x).type(dtype)  
+y_t = torch.from_numpy(y).type(dtype).unsqueeze(1) ## unsqueeze means add a new dimension, and in our vector, I'll add a dimension at the 1 position so, I will have a vector of shape (30,1)
 
-log = []
-def apply_step(params):
-  preds = f(x, params)
-  loss = mse(preds, y)
-  loss.backward()
-  params.data -= lr * params.grad.data
-  log.append(params.data)
-  params.grad = None
-  return preds, loss, log
+## This is an implementation of (Batch) Gradient Descent with tensors.
 
-#op,l,params_ = apply_step(params)
+w_init_t = torch.from_numpy(w_init).type(dtype)
+b_init_t = torch.from_numpy(b_init).type(dtype)
 
-for i in range(1000): op,l,params_ = apply_step(params)
+# .clone() is useful to create a copy of the original variable that doesn’t forget the history of ops so it allows gradient flow and avoids errors with inlace ops.
+
+w_t = w_init_t.clone()
+w_t.unsqueeze_(1) 
+b_t = b_init_t.clone()
+b_t.unsqueeze_(1)
+print("Initial values of the parameters: ", w_t, b_t)
+
+class gradient_learning_with_tensors:
+    def __init__(self,x,y,b,epoch,lr,w=[]):
+        self.w = w
+        self.x = x
+        self.y = y
+        self.b = b
+        self.epoch = epoch
+        self.learning_rate = lr
+
+    def forward_pass(self):
+        return torch.matmul(self.x,self.w) + self.b
+    
+    def f_loss(self,y_pred):
+        return torch.pow(y_pred - self.y , 2)
+
+    def gradient(self):
+        pass1 = torch.matmul(self.x,self.w)
+        pass2 = 2*((pass1 + self.b) - self.y)
+        gradient_W = torch.matmul(torch.t(self.x),pass2)    
+        gradient_B = 2*(torch.matmul(self.x,self.w) + self.b - self.y)
+        return gradient_W, gradient_B
+
+    def training(self):
+        w_updated = np.array([0.,0.])
+        w_updated = torch.from_numpy(w_updated).unsqueeze(1)
+        for e in range(self.epoch):
+            y_pred = self.forward_pass()
+            loss = self.f_loss(y_pred)
+            grad = self.gradient()
+            
+            w_updated[0] = grad[0][0]
+            w_updated[1] = grad[0][1]
+            #print(self.gradient()[1])
+            b_grad = sum(grad[1])
+            self.w = self.w - self.learning_rate*w_updated
+            self.b = self.b - self.learning_rate*b_grad
+
+            print("Progress - Epoch: " + str(e) + " *|* " + " Loss = " + str(sum(loss)) + " b_grad: " + str(b_grad) + " w_grad: " + str(w_updated))
+            print("Parameters estimated: " + "w1 = " + str(self.w[0]) + " w2 = " + str(self.w[1]) + " b = " + str(self.b))
+    
+        
+## we initialize the weigths 
+lr = torch.tensor(0.01).type(dtype)
+epoch_training_tensors = gradient_learning_with_tensors(x_t,y_t,b_t,100,lr,w_t)
+epoch_training_tensors.training()
+
+
+
+######################################################### Linear regression with Autograd
+
+# Setting requires_grad = True indicates that we want to compute gradients with respect to these Tensors during the backward pass (in thise case, we would like to compute the gradients in the 
+# W's and b)
+
+w_v = w_init_t.clone().unsqueeze(1)
+w_v.requires_grad_(True)
+b_v = b_init_t.clone().unsqueeze(1)
+b_v.requires_grad_(True)
+
+
+for epoch in range(10):
+    y_pred = torch.matmul(x_t,w_v) + b_v
+    loss_f = torch.pow(y_pred - y_t, 2).sum()
+
+    ## Use autograd to compute the backward pass. This call will compute the gradient of loss with respect to all variables with requires_grad = True.
+    ## After this call w.grad and b.grad will be tensors holding the gradient of the loss with respect to w and b respectively. 
+    loss_f.backward()
+
+    ## Update weigths using gradient descent. For this step we just want to mutate the values of w_v and b_v in-place; we don't want to build up a computational graph for the update steps
+    ## so we use the torch.no_grad() context manager to prevent PyTorch from building a computational graph for the updates
+    with torch.no_grad():
+        w_v -= lr * w_v.grad
+        b_v -= lr * b_v.grad
+
+    ## Manually zero the gradient after updating weigths, otherwise, gradients will be acumulated after each .backward()
+    w_v.grad.zero_()
+    b_v.grad.zero_()
+
+    print("progress: ", " epoch ", epoch, " loss: ", loss_f.data.item())
+
+
+############################################## Linear regression with neural network
+
+## An implementation of (Batch) Gradient Descent using the nn package. Here we have a super simple model with one layer and no activation function!
+
+## Use the nn package to define our model as a sequence of layers. 
+## nn.Sequential is a Module which contains other Modules, and applies them in sequence to produce its output.
+ 
+## Each linear Module computes output from input using a linear function
+## and, holds internal Variables for its weigth and bias
+
+model = torch.nn.Sequential(torch.nn.Linear(2,1),)
+
+
+for m in model.children():
+    m.weight.data = w_init_t.clone().unsqueeze(0)
+    m.bias.data = b_init_t.clone()
+
+## The nn package also contains definitions of popular loss functions; in this case we will use Mean Squared Error (MSE) as our loss function. 
+loss_fn = torch.nn.MSELoss(reduction="sum")
+
+## switch to train mode
+model.train()
+
+for epoch in range(10):
+
+    ## Forward pass: compute predicted y by passing x to the model. Module objects override the __call__ operator so you can call them like functions. 
+    ## when doing so you pass a Variable of input data to the Module and it produces a Variable of output data. 
+
+    y_pred = model(x_t) ## This operation is equivalent to: y_pred = model.forward(x_v)
+
+
+    ## compute and print loss. We pass Variables containing the predicted and true values of y, and the loss function returns a Variable containing the loss. 
+    loss = loss_fn(y_pred,y_t)
+
+
+    ## Zero the gradients before running the backward pass. 
+    model.zero_grad()
+
+    ## backward pass: compute gradient of the loss with respect to all the learnable parameters of the model. Internally, the parameters of each Module are stored in Variables with requires_grad = True, so this 
+    ## call will compute gradients for all learnable parameters in the model. 
+
+    loss.backward()
+
+    ## Update the weigths using gradient descent. Each parameter is a Tensor, so we can access its data and gradients like we did before. 
+    with torch.no_grad():
+        for param in model.parameters():
+            param.data -= lr * param.grad
+    
+    print("progress: ", " epoch ", epoch, " loss: ", loss.data.item())
+
+
+
+######################################## Linear regression with neural network with the help of an optimizer
+
+
+model_ = torch.nn.Sequential(torch.nn.Linear(2,1),)
+
+for m_ in model_.children():
+    m_.weight.data = w_init_t.clone().unsqueeze(0)
+    m_.bias.data = b_init_t.clone()
+
+loss_fn_ = torch.nn.MSELoss(reduction="sum")
+
+model_.train()
+
+## Last step, we use directly the optim package to update the weights and bias. 
+optimizer = torch.optim.SGD(model_.parameters(), lr = lr)
+
+for epoch in range(10):
+    y_pred = model_(x_t)
+    loss = loss_fn_( y_pred, y_t )
+    print("progress: ", " epoch ", epoch, " loss: ", loss.data.item())
+    ## zero gradients, perform a backward pass, and update the weights.
+    optimizer.zero_grad()
+    loss.backward()
+    ## The optimizer step is doing the same like the line 335-337
+    optimizer.step() #optimizer.step method will updates the parameters, the function can be called once the gradients are computed using e.g .backward().
+
+
+
+
+
+
+
+
+
+
